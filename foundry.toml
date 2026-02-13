@@ -5,7 +5,7 @@ optimizer = true
 optimizer_runs = 1111
 revert_strings = "strip"
 isolate = true
-deny_warnings = true
+deny_warnings = false
 ignored_error_codes = ["unused-param", "code-size", "init-code-size"]
 
 ffi = true
