@@ -205,6 +205,70 @@ contract ZeroCapitalAttack is Test {
     emit log_string("a depositor must hold their position for a meaningful period to earn yield.");
   }
 
+  // =========================================================================
+  // ATTACK 8: Oracle Configuration Audit + Staleness Check
+  // =========================================================================
+  /// @notice Checks if any live market uses a manipulable PriceFeedPool oracle
+  ///   or if the Auditor lacks staleness validation (it does - no updatedAt check).
+  function testAttack8_OracleConfigAudit() external {
+    emit log_string("=== ATTACK 8: Oracle Configuration & Staleness Audit ===");
+
+    Market[] memory mkts = new Market[](4);
+    mkts[0] = marketUSDC;
+    mkts[1] = marketWETH;
+    mkts[2] = marketOP;
+    mkts[3] = Market(0x22ab31Cd55130435b5efBf9224b6a9d5EC36533F);
+    string[4] memory names = ["USDC", "WETH", "OP", "wstETH"];
+
+    for (uint256 i = 0; i < mkts.length; ++i) {
+      (uint128 adjustFactor, , , bool isListed, IPriceFeed priceFeed) = auditor.markets(mkts[i]);
+      if (!isListed) continue;
+
+      emit log_string(string.concat("--- ", names[i], " ---"));
+      emit log_named_address("  Price feed", address(priceFeed));
+      emit log_named_uint("  Adjust factor", adjustFactor);
+
+      int256 price = priceFeed.latestAnswer();
+      emit log_named_int("  Current price", price);
+
+      // Check if this is a PriceFeedPool (has pool() function)
+      (bool ok, bytes memory data) = address(priceFeed).staticcall(abi.encodeWithSignature("pool()"));
+      if (ok && data.length >= 32) {
+        address poolAddr = abi.decode(data, (address));
+        emit log_named_address("  [CRITICAL] PriceFeedPool detected! Pool", poolAddr);
+        emit log_string("  [CRITICAL] This oracle uses AMM spot reserves - FLASH LOAN MANIPULABLE");
+      }
+
+      // Check if this is a PriceFeedWrapper (has wrapper() function)
+      (ok, data) = address(priceFeed).staticcall(abi.encodeWithSignature("wrapper()"));
+      if (ok && data.length >= 32) {
+        address wrapper = abi.decode(data, (address));
+        emit log_named_address("  PriceFeedWrapper detected. Wrapper", wrapper);
+      }
+
+      // Check if this is a PriceFeedDouble (has priceFeedTwo() function)
+      (ok, data) = address(priceFeed).staticcall(abi.encodeWithSignature("priceFeedTwo()"));
+      if (ok && data.length >= 32) {
+        address feed2 = abi.decode(data, (address));
+        emit log_named_address("  PriceFeedDouble detected. Feed2", feed2);
+      }
+    }
+
+    emit log_string("");
+    emit log_string("=== ORACLE STALENESS VULNERABILITY ===");
+    emit log_string("Auditor.assetPrice() calls priceFeed.latestAnswer() with ZERO validation:");
+    emit log_string("  - No updatedAt timestamp check");
+    emit log_string("  - No answeredInRound check");
+    emit log_string("  - No heartbeat/staleness threshold");
+    emit log_string("  - Only checks price > 0");
+    emit log_string("");
+    emit log_string("IMPACT: During Chainlink outages or congestion, stale prices enable:");
+    emit log_string("  1. Borrowing against inflated collateral (stale high price)");
+    emit log_string("  2. Avoiding liquidation (stale price hides underwater position)");
+    emit log_string("  3. Under-collateralized positions that become bad debt");
+    emit log_string("  4. If PriceFeedDouble is used, stale feed A * fresh feed B = wrong price");
+  }
+
   // ==================== INTERNAL HELPERS ====================
 
   function _findFirstValidMaturity() internal view returns (uint256 mat) {
